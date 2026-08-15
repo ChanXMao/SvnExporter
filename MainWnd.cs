@@ -148,27 +148,8 @@ public partial class MainWnd : Form
             return;
         }
 
-        try
+        if (!TryPrepareOutputDirectory(outputDirectory))
         {
-            if (Directory.Exists(outputDirectory) && Directory.EnumerateFileSystemEntries(outputDirectory).Any())
-            {
-                DialogResult confirmation = MessageBox.Show(
-                    this,
-                    "选择的导出目录不是空目录，已有同名文件可能会被覆盖。是否继续？",
-                    "确认导出",
-                    MessageBoxButtons.YesNo,
-                    MessageBoxIcon.Warning,
-                    MessageBoxDefaultButton.Button2);
-
-                if (confirmation != DialogResult.Yes)
-                {
-                    return;
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            ShowValidationError($"无法检查导出目录：{ex.Message}");
             return;
         }
 
@@ -234,6 +215,93 @@ public partial class MainWnd : Form
                 Close();
             }
         }
+    }
+
+    private bool TryPrepareOutputDirectory(string outputDirectory)
+    {
+        if (!cb_ClearOutputPath.Checked || !Directory.Exists(outputDirectory))
+        {
+            return true;
+        }
+
+        try
+        {
+            if (!Directory.EnumerateFileSystemEntries(outputDirectory).Any())
+            {
+                return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowOutputPreparationError($"无法检查输出目录：{ex.Message}", "检查输出目录失败");
+            return false;
+        }
+
+        DialogResult confirmation = MessageBox.Show(
+            this,
+            "输出目录非空，继续将删除目录中所有文件，是否继续？",
+            "确认清空输出目录",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Warning,
+            MessageBoxDefaultButton.Button2);
+
+        if (confirmation != DialogResult.Yes)
+        {
+            return false;
+        }
+
+        try
+        {
+            ClearDirectoryContents(outputDirectory);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ShowOutputPreparationError(
+                $"清空输出目录失败，导出已取消。目录中可能已有部分内容被删除：{ex.Message}",
+                "清空输出目录失败");
+            return false;
+        }
+    }
+
+    private static void ClearDirectoryContents(string directoryPath)
+    {
+        foreach (string entryPath in Directory.EnumerateFileSystemEntries(directoryPath))
+        {
+            DeleteFileSystemEntry(entryPath);
+        }
+    }
+
+    private static void DeleteFileSystemEntry(string entryPath)
+    {
+        FileAttributes attributes = File.GetAttributes(entryPath);
+        bool isDirectory = (attributes & FileAttributes.Directory) != 0;
+        bool isReparsePoint = (attributes & FileAttributes.ReparsePoint) != 0;
+
+        if (isDirectory && !isReparsePoint)
+        {
+            ClearDirectoryContents(entryPath);
+        }
+
+        if ((attributes & FileAttributes.ReadOnly) != 0)
+        {
+            File.SetAttributes(entryPath, attributes & ~FileAttributes.ReadOnly);
+        }
+
+        if (isDirectory)
+        {
+            Directory.Delete(entryPath, recursive: false);
+        }
+        else
+        {
+            File.Delete(entryPath);
+        }
+    }
+
+    private void ShowOutputPreparationError(string message, string title)
+    {
+        AppendConsole(message, Color.Red);
+        MessageBox.Show(this, message, title, MessageBoxButtons.OK, MessageBoxIcon.Error);
     }
 
     private bool TryCreateExportRequests(

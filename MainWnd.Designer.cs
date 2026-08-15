@@ -59,6 +59,7 @@
             label8 = new Label();
             groupBox3 = new GroupBox();
             btn_Browse2 = new Button();
+            cb_ClearOutputPath = new CheckBox();
             groupBox1.SuspendLayout();
             groupBox2.SuspendLayout();
             groupBox3.SuspendLayout();
@@ -68,7 +69,7 @@
             // 
             tb_VersionNum.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
             tb_VersionNum.Font = new Font("Microsoft YaHei UI", 10F);
-            tb_VersionNum.Location = new Point(702, 339);
+            tb_VersionNum.Location = new Point(702, 346);
             tb_VersionNum.Margin = new Padding(6);
             tb_VersionNum.Name = "tb_VersionNum";
             tb_VersionNum.Size = new Size(236, 50);
@@ -80,7 +81,7 @@
             label1.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
             label1.AutoSize = true;
             label1.Font = new Font("Microsoft YaHei UI", 10F);
-            label1.Location = new Point(26, 339);
+            label1.Location = new Point(26, 346);
             label1.Margin = new Padding(6, 0, 6, 0);
             label1.Name = "label1";
             label1.Size = new Size(640, 45);
@@ -249,6 +250,7 @@
             groupBox1.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             groupBox1.BackColor = Color.RosyBrown;
             groupBox1.Controls.Add(cb_ExportVersion);
+            groupBox1.Controls.Add(btn_DebugMode);
             groupBox1.Controls.Add(tb_ProjectPath);
             groupBox1.Controls.Add(btn_Browse);
             groupBox1.Controls.Add(label3);
@@ -273,7 +275,7 @@
             cb_ExportVersion.Checked = true;
             cb_ExportVersion.CheckState = CheckState.Checked;
             cb_ExportVersion.Font = new Font("Microsoft YaHei UI", 10F);
-            cb_ExportVersion.Location = new Point(1215, 339);
+            cb_ExportVersion.Location = new Point(1116, 346);
             cb_ExportVersion.Name = "cb_ExportVersion";
             cb_ExportVersion.Size = new Size(194, 49);
             cb_ExportVersion.TabIndex = 10;
@@ -284,8 +286,8 @@
             // 
             groupBox2.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             groupBox2.BackColor = Color.DarkKhaki;
+            groupBox2.Controls.Add(cb_ClearOutputPath);
             groupBox2.Controls.Add(cb_ExportModify);
-            groupBox2.Controls.Add(btn_DebugMode);
             groupBox2.Controls.Add(btn_RemoveAuthor);
             groupBox2.Controls.Add(btn_AddAuthor);
             groupBox2.Controls.Add(tb_BeginVersionNum);
@@ -309,7 +311,7 @@
             cb_ExportModify.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
             cb_ExportModify.AutoSize = true;
             cb_ExportModify.Font = new Font("Microsoft YaHei UI", 10F);
-            cb_ExportModify.Location = new Point(1215, 416);
+            cb_ExportModify.Location = new Point(1116, 416);
             cb_ExportModify.Name = "cb_ExportModify";
             cb_ExportModify.Size = new Size(194, 49);
             cb_ExportModify.TabIndex = 11;
@@ -321,7 +323,7 @@
             btn_DebugMode.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
             btn_DebugMode.AutoSize = true;
             btn_DebugMode.Font = new Font("Microsoft YaHei UI", 9F);
-            btn_DebugMode.Location = new Point(1464, 418);
+            btn_DebugMode.Location = new Point(1356, 349);
             btn_DebugMode.Name = "btn_DebugMode";
             btn_DebugMode.Size = new Size(175, 43);
             btn_DebugMode.TabIndex = 21;
@@ -448,7 +450,21 @@
             btn_Browse2.TabIndex = 11;
             btn_Browse2.Text = "浏览";
             btn_Browse2.UseVisualStyleBackColor = true;
-            // 
+            //
+            // cb_ClearOutputPath
+            //
+            cb_ClearOutputPath.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
+            cb_ClearOutputPath.AutoSize = true;
+            cb_ClearOutputPath.Checked = true;
+            cb_ClearOutputPath.CheckState = CheckState.Checked;
+            cb_ClearOutputPath.Font = new Font("Microsoft YaHei UI", 10F);
+            cb_ClearOutputPath.Location = new Point(1356, 413);
+            cb_ClearOutputPath.Name = "cb_ClearOutputPath";
+            cb_ClearOutputPath.Size = new Size(262, 49);
+            cb_ClearOutputPath.TabIndex = 22;
+            cb_ClearOutputPath.Text = "清空输出目录";
+            cb_ClearOutputPath.UseVisualStyleBackColor = true;
+            //
             // MainWnd
             // 
             AutoScaleDimensions = new SizeF(18F, 39F);
@@ -504,5 +520,6 @@
         private Label label8;
         private GroupBox groupBox3;
         private Button btn_Browse2;
+        private CheckBox cb_ClearOutputPath;
     }
 }
