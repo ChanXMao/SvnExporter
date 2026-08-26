@@ -132,9 +132,22 @@ public partial class MainWnd : Form
             return;
         }
 
-        versionRequest = versionRequest is null
-            ? null
-            : versionRequest with { DestinationDirectory = outputDirectory };
+        if (versionRequest is not null)
+        {
+            string projectRootDirectoryName = Path.GetFileName(
+                Path.TrimEndingDirectorySeparator(projectDirectory));
+            if (projectRootDirectoryName.Length == 0)
+            {
+                ShowValidationError("版本导出需要保留主目录名称，因此主目录不能直接选择磁盘根目录或共享根目录。");
+                return;
+            }
+
+            versionRequest = versionRequest with
+            {
+                DestinationDirectory = Path.Combine(outputDirectory, projectRootDirectoryName)
+            };
+        }
+
         authorRequest = authorRequest is null
             ? null
             : authorRequest with
@@ -329,46 +342,46 @@ public partial class MainWnd : Form
             return false;
         }
 
+        IReadOnlyList<string> enteredSubdirectories = SvnInputParser.SplitMultiValue(tb_ExportSubPath.Text);
+        if (enteredSubdirectories.Count == 0)
+        {
+            ShowValidationError("请至少填写一个导出子目录；该条件同时用于版本导出和账号修改记录过滤。");
+            return false;
+        }
+
+        var subdirectories = new List<string>();
+        foreach (string subdirectory in enteredSubdirectories)
+        {
+            if (!TryNormalizeSubdirectory(projectPath, subdirectory, out string normalizedSubdirectory))
+            {
+                ShowValidationError($"导出子目录“{subdirectory}”无效，请填写主目录下的相对路径。");
+                return false;
+            }
+
+            if (!subdirectories.Contains(normalizedSubdirectory, StringComparer.OrdinalIgnoreCase))
+            {
+                subdirectories.Add(normalizedSubdirectory);
+            }
+        }
+
+        string normalizedPatterns = tb_ExportFileType.Text
+            .Replace('＊', '*')
+            .Replace('？', '?');
+        IReadOnlyList<string> filePatterns = SvnInputParser.SplitMultiValue(normalizedPatterns);
+        if (filePatterns.Count == 0)
+        {
+            ShowValidationError("请至少填写一种导出文件类型；该条件同时用于版本导出和账号修改记录过滤。");
+            return false;
+        }
+
+        if (filePatterns.Any(pattern => pattern.IndexOfAny(['/', '\\']) >= 0))
+        {
+            ShowValidationError("导出文件类型中不能包含目录路径，请使用类似 *.cs、*.shader 的格式。");
+            return false;
+        }
+
         if (cb_ExportVersion.Checked)
         {
-            IReadOnlyList<string> enteredSubdirectories = SvnInputParser.SplitMultiValue(tb_ExportSubPath.Text);
-            if (enteredSubdirectories.Count == 0)
-            {
-                ShowValidationError("版本导出已开启，请至少填写一个导出子目录。");
-                return false;
-            }
-
-            var subdirectories = new List<string>();
-            foreach (string subdirectory in enteredSubdirectories)
-            {
-                if (!TryNormalizeSubdirectory(projectPath, subdirectory, out string normalizedSubdirectory))
-                {
-                    ShowValidationError($"导出子目录“{subdirectory}”无效，请填写主目录下的相对路径。");
-                    return false;
-                }
-
-                if (!subdirectories.Contains(normalizedSubdirectory, StringComparer.OrdinalIgnoreCase))
-                {
-                    subdirectories.Add(normalizedSubdirectory);
-                }
-            }
-
-            string normalizedPatterns = tb_ExportFileType.Text
-                .Replace('＊', '*')
-                .Replace('？', '?');
-            IReadOnlyList<string> filePatterns = SvnInputParser.SplitMultiValue(normalizedPatterns);
-            if (filePatterns.Count == 0)
-            {
-                ShowValidationError("版本导出已开启，请至少填写一种导出文件类型。");
-                return false;
-            }
-
-            if (filePatterns.Any(pattern => pattern.IndexOfAny(['/', '\\']) >= 0))
-            {
-                ShowValidationError("导出文件类型中不能包含目录路径，请使用类似 *.cs、*.shader 的格式。");
-                return false;
-            }
-
             versionRequest = new VersionExportRequest(
                 projectPath,
                 subdirectories,
@@ -383,6 +396,16 @@ public partial class MainWnd : Form
             if (authors.Count == 0)
             {
                 ShowValidationError("账号修改导出已开启，请至少选择一个导出账号。");
+                return false;
+            }
+
+            try
+            {
+                AuthorDiffFileName.CreateFileNames(authors);
+            }
+            catch (InvalidOperationException ex)
+            {
+                ShowValidationError(ex.Message);
                 return false;
             }
 
@@ -401,6 +424,8 @@ public partial class MainWnd : Form
             authorRequest = new AuthorExportRequest(
                 projectPath,
                 authors,
+                subdirectories,
+                filePatterns,
                 startRevision,
                 endRevision,
                 string.Empty);
@@ -490,20 +515,22 @@ public partial class MainWnd : Form
             string range = $"{logStartRevision}:{authorRequest.EndRevision}";
             AppendDebugCommand(
             [
-                "log", "--xml", "--verbose", "--quiet", "--revision", range,
+                "log", "--xml", "--verbose", "--revision", range,
                 "--non-interactive", AppendPegRevision(authorRequest.LocalRootPath, authorRequest.EndRevision)
             ]);
 
             AppendConsole(
-                $"说明：实际执行时会解析上述 log 结果，筛选账号“{string.Join(", ", authorRequest.Authors)}”，再为每个修改文件生成以下命令。调试模式未执行 log，因此这里只能输出动态模板。",
+                $"说明：实际执行时会解析上述 log 结果，筛选账号“{string.Join(", ", authorRequest.Authors)}”、子目录“{string.Join(", ", authorRequest.Subdirectories)}”和文件类型“{string.Join(", ", authorRequest.FilePatterns)}”，再按匹配提交和文件生成以下命令。调试模式未执行 log，因此这里只能输出动态模板。",
                 Color.White);
             AppendDebugCommand(
             [
-                "export", "--force", "--quiet", "--revision", authorRequest.EndRevision,
-                "--non-interactive", $"<修改文件的 SVN URL>@{authorRequest.EndRevision}",
-                Path.Combine(authorRequest.DestinationDirectory, "<原相对路径>")
+                "diff", "--change", "<匹配提交版本>", "--non-interactive",
+                "<匹配文件的 SVN URL>@<适用 peg 版本>"
             ],
             "[动态模板] ");
+            AppendConsole(
+                $"说明：命令的差异文本会按提交版本从小到大追加写入“{Path.Combine(authorRequest.DestinationDirectory, "<账号>.diff")}”，每个账号生成一个文件。",
+                Color.White);
         }
 
         AppendConsole("调试模式命令生成完毕，未执行任何 SVN 命令，也未写入任何导出文件。", Color.LawnGreen);

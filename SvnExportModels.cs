@@ -34,11 +34,13 @@ public sealed record VersionExportRequest(
     string DestinationDirectory);
 
 /// <summary>
-/// 按账号导出修改文件所需的参数。
+/// 按账号导出修改记录所需的参数。
 /// </summary>
 public sealed record AuthorExportRequest(
     string LocalRootPath,
     IReadOnlyList<string> Authors,
+    IReadOnlyList<string> Subdirectories,
+    IReadOnlyList<string> FilePatterns,
     string StartRevision,
     string EndRevision,
     string DestinationDirectory);
@@ -97,5 +99,55 @@ public static class SvnInputParser
             .Where(item => item.Length > 0)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
+}
+
+/// <summary>
+/// 将 SVN 账号转换为同名 diff 文件，并检查 Windows 文件名限制及大小写冲突。
+/// </summary>
+internal static class AuthorDiffFileName
+{
+    private static readonly HashSet<string> ReservedWindowsNames = new(
+        [
+            "CON", "PRN", "AUX", "NUL",
+            "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+            "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+        ],
+        StringComparer.OrdinalIgnoreCase);
+
+    public static IReadOnlyDictionary<string, string> CreateFileNames(IEnumerable<string> authors)
+    {
+        ArgumentNullException.ThrowIfNull(authors);
+
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        var usedFileNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (string author in authors)
+        {
+            string normalizedAuthor = author.Trim();
+            string fileName = $"{normalizedAuthor}.diff";
+            if (normalizedAuthor.Length == 0 ||
+                normalizedAuthor.Any(character => character < 32) ||
+                normalizedAuthor.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+            {
+                throw new InvalidOperationException($"账号“{author}”包含 Windows 文件名不支持的字符，无法生成同名 diff 文件。");
+            }
+
+            string deviceName = normalizedAuthor.Split('.', 2)[0];
+            if (ReservedWindowsNames.Contains(deviceName))
+            {
+                throw new InvalidOperationException($"账号“{author}”是 Windows 保留文件名，无法生成同名 diff 文件。");
+            }
+
+            if (!usedFileNames.Add(fileName))
+            {
+                throw new InvalidOperationException(
+                    $"账号列表中存在只能以大小写区分的名称（例如“{author}”），Windows 无法为它们分别生成同名 diff 文件。");
+            }
+
+            result.Add(normalizedAuthor, fileName);
+        }
+
+        return result;
     }
 }

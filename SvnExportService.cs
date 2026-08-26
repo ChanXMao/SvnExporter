@@ -179,11 +179,15 @@ public sealed class SvnExportService : ISvnExportService
         string destinationRoot = ValidateDestination(request.DestinationDirectory);
         string endRevision = NormalizeRevision(request.EndRevision, "工程导出版本号", emptyMeansHead: true);
         string startRevision = NormalizeRevision(request.StartRevision, "起始版本号", emptyMeansHead: false);
-        HashSet<string> authors = NormalizeAuthors(request.Authors);
+        IReadOnlyList<string> subdirectories = NormalizeSubdirectories(request.Subdirectories, localRoot);
+        IReadOnlyList<string> filePatterns = NormalizeFilePatterns(request.FilePatterns);
+        IReadOnlyList<string> authors = NormalizeAuthors(request.Authors);
         if (authors.Count == 0)
         {
             throw new InvalidOperationException("账号修改导出至少需要选择一个账号。");
         }
+
+        IReadOnlyDictionary<string, string> authorFileNames = AuthorDiffFileName.CreateFileNames(authors);
 
         if (startRevision.Length > 0 && endRevision != "HEAD" &&
             long.Parse(startRevision, CultureInfo.InvariantCulture) > long.Parse(endRevision, CultureInfo.InvariantCulture))
@@ -206,7 +210,7 @@ public sealed class SvnExportService : ISvnExportService
         string range = $"{logStartRevision}:{endRevision}";
         CommandResult logCommand = await RunCommandAsync(
             [
-                "log", "--xml", "--verbose", "--quiet", "--revision", range,
+                "log", "--xml", "--verbose", "--revision", range,
                 "--non-interactive", AppendPegRevision(workingCopy.Url, endRevision)
             ],
             output,
@@ -223,66 +227,115 @@ public sealed class SvnExportService : ISvnExportService
             logCommand.StandardOutput,
             authors,
             workingCopy.RepositoryRelativePath,
-            todayStart);
+            todayStart,
+            subdirectories,
+            filePatterns);
 
-        foreach (string deletedPath in changeSet.DeletedPaths.OrderBy(path => path, StringComparer.Ordinal))
-        {
-            Report(output, $"已删除，无法导出：{deletedPath}", SvnMessageKind.Error);
-        }
-
-        int exportedCount = 0;
-        int skippedCount = 0;
+        ILookup<string, AuthorRevisionChange> changesByAuthor = changeSet.Revisions
+            .ToLookup(change => change.Author, StringComparer.Ordinal);
+        int generatedFileCount = 0;
+        int matchedRevisionCount = 0;
+        int matchedPathCount = 0;
+        int failedDiffCount = 0;
         bool allCommandsSucceeded = true;
 
-        foreach (string relativePath in changeSet.ExportPaths.OrderBy(path => path, StringComparer.Ordinal))
+        foreach (string author in authors)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            string targetPath;
-            try
+            AuthorRevisionChange[] authorChanges = changesByAuthor[author]
+                .OrderBy(change => change.Revision)
+                .ToArray();
+            matchedRevisionCount += authorChanges.Length;
+            matchedPathCount += authorChanges.Sum(change => change.Paths.Count);
+
+            var diffText = new StringBuilder();
+            AppendDiffFileHeader(
+                diffText,
+                author,
+                startRevision,
+                endRevision,
+                subdirectories,
+                filePatterns);
+
+            if (authorChanges.Length == 0)
             {
-                targetPath = GetSafeDestinationPath(destinationRoot, relativePath);
-                string? parentDirectory = Path.GetDirectoryName(targetPath);
-                if (!string.IsNullOrEmpty(parentDirectory))
+                diffText.AppendLine("# 未找到符合账号、版本范围、导出子目录及文件类型条件的修改记录。");
+            }
+
+            bool authorSucceeded = true;
+            foreach (AuthorRevisionChange revisionChange in authorChanges)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                AppendRevisionHeader(diffText, revisionChange);
+
+                foreach (AuthorChangedPath changedPath in revisionChange.Paths)
                 {
-                    Directory.CreateDirectory(parentDirectory);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    diffText.AppendLine($"# 文件: {changedPath.RelativePath}");
+                    diffText.AppendLine($"# SVN 操作: {changedPath.Action}");
+                    diffText.AppendLine();
+
+                    long pegRevision = string.Equals(changedPath.Action, "D", StringComparison.OrdinalIgnoreCase)
+                        ? Math.Max(0, revisionChange.Revision - 1)
+                        : revisionChange.Revision;
+                    string sourceUrl = CombineSvnUrl(workingCopy.Url, changedPath.RelativePath);
+                    CommandResult diffCommand = await RunCommandAsync(
+                        [
+                            "diff", "--change", revisionChange.Revision.ToString(CultureInfo.InvariantCulture),
+                            "--non-interactive",
+                            AppendPegRevision(sourceUrl, pegRevision.ToString(CultureInfo.InvariantCulture))
+                        ],
+                        output,
+                        cancellationToken);
+
+                    if (!diffCommand.Succeeded)
+                    {
+                        failedDiffCount++;
+                        allCommandsSucceeded = false;
+                        authorSucceeded = false;
+                        diffText.AppendLine($"# 获取差异失败：{changedPath.RelativePath}");
+                        diffText.AppendLine();
+                        continue;
+                    }
+
+                    if (diffCommand.StandardOutput.Length == 0)
+                    {
+                        diffText.AppendLine($"# SVN 未返回差异文本：{changedPath.RelativePath}");
+                        diffText.AppendLine();
+                        continue;
+                    }
+
+                    diffText.Append(diffCommand.StandardOutput);
+                    if (!diffCommand.StandardOutput.EndsWith('\n'))
+                    {
+                        diffText.AppendLine();
+                    }
+
+                    diffText.AppendLine();
                 }
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
-            {
-                skippedCount++;
-                allCommandsSucceeded = false;
-                Report(output, $"无法创建“{relativePath}”的导出目录：{ex.Message}", SvnMessageKind.Error);
-                continue;
-            }
 
-            string sourceUrl = CombineSvnUrl(workingCopy.Url, relativePath);
-            CommandResult exportCommand = await RunCommandAsync(
-                [
-                    "export", "--force", "--quiet", "--revision", endRevision,
-                    "--non-interactive", AppendPegRevision(sourceUrl, endRevision), targetPath
-                ],
-                output,
+            string diffFilePath = GetSafeDestinationPath(destinationRoot, authorFileNames[author]);
+            await File.WriteAllTextAsync(
+                diffFilePath,
+                diffText.ToString(),
+                new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
                 cancellationToken);
-
-            if (exportCommand.Succeeded)
-            {
-                exportedCount++;
-            }
-            else
-            {
-                skippedCount++;
-                allCommandsSucceeded = false;
-            }
+            generatedFileCount++;
+            Report(
+                output,
+                $"已生成账号“{author}”的修改记录：{diffFilePath}",
+                authorSucceeded ? SvnMessageKind.Success : SvnMessageKind.Error);
         }
 
         string summary =
-            $"账号修改导出完成：成功导出 {exportedCount} 个文件，跳过 {skippedCount} 个文件，发现 {changeSet.DeletedPaths.Count} 个删除项。";
+            $"账号修改记录导出完成：生成 {generatedFileCount} 个 diff 文件，匹配 {matchedRevisionCount} 个提交、{matchedPathCount} 条文件修改，失败 {failedDiffCount} 个差异命令。";
         Report(output, summary, allCommandsSucceeded ? SvnMessageKind.Success : SvnMessageKind.Error);
         return new SvnExportResult(
             allCommandsSucceeded,
-            exportedCount,
-            skippedCount,
-            changeSet.DeletedPaths.Count,
+            generatedFileCount,
+            failedDiffCount,
+            0,
             summary);
     }
 
@@ -382,28 +435,30 @@ public sealed class SvnExportService : ISvnExportService
 
     private static AuthorChangeSet ParseAuthorChanges(
         string xml,
-        HashSet<string> authors,
+        IReadOnlyList<string> authors,
         string rootRepositoryPath,
-        DateTimeOffset? earliestDate)
+        DateTimeOffset? earliestDate,
+        IReadOnlyList<string> subdirectories,
+        IReadOnlyList<string> filePatterns)
     {
         try
         {
             XDocument document = XDocument.Parse(xml, LoadOptions.None);
-            var exportPaths = new HashSet<string>(StringComparer.Ordinal);
-            var deletedPaths = new HashSet<string>(StringComparer.Ordinal);
+            var selectedAuthors = authors.ToHashSet(StringComparer.Ordinal);
+            var revisions = new List<AuthorRevisionChange>();
             string normalizedRoot = NormalizeRepositoryPath(rootRepositoryPath);
 
             foreach (XElement logEntry in document.Descendants().Where(element => element.Name.LocalName == "logentry"))
             {
                 string author = FindElement(logEntry, "author")?.Value.Trim() ?? string.Empty;
-                if (!authors.Contains(author))
+                if (!selectedAuthors.Contains(author))
                 {
                     continue;
                 }
 
+                string dateText = FindElement(logEntry, "date")?.Value.Trim() ?? string.Empty;
                 if (earliestDate.HasValue)
                 {
-                    string dateText = FindElement(logEntry, "date")?.Value.Trim() ?? string.Empty;
                     if (!DateTimeOffset.TryParse(
                             dateText,
                             CultureInfo.InvariantCulture,
@@ -415,6 +470,17 @@ public sealed class SvnExportService : ISvnExportService
                     }
                 }
 
+                string revisionText = ((string?)logEntry.Attribute("revision") ?? string.Empty).Trim();
+                if (!long.TryParse(
+                        revisionText,
+                        NumberStyles.None,
+                        CultureInfo.InvariantCulture,
+                        out long revision))
+                {
+                    throw new InvalidOperationException("SVN 修改记录中缺少有效的版本号。");
+                }
+
+                var changedPaths = new Dictionary<string, AuthorChangedPath>(StringComparer.Ordinal);
                 foreach (XElement pathElement in logEntry.Descendants().Where(element => element.Name.LocalName == "path"))
                 {
                     string repositoryPath = NormalizeRepositoryPath(pathElement.Value);
@@ -425,29 +491,97 @@ public sealed class SvnExportService : ISvnExportService
 
                     string action = ((string?)pathElement.Attribute("action") ?? string.Empty).Trim().ToUpperInvariant();
                     string nodeKind = ((string?)pathElement.Attribute("kind") ?? string.Empty).Trim();
-                    if (action == "D")
-                    {
-                        deletedPaths.Add(relativePath);
-                        exportPaths.Remove(relativePath);
-                        continue;
-                    }
-
-                    if (string.Equals(nodeKind, "dir", StringComparison.OrdinalIgnoreCase))
+                    if (string.Equals(nodeKind, "dir", StringComparison.OrdinalIgnoreCase) ||
+                        !IsPathIncluded(relativePath, subdirectories, filePatterns))
                     {
                         continue;
                     }
 
-                    exportPaths.Add(relativePath);
-                    deletedPaths.Remove(relativePath);
+                    changedPaths[relativePath] = new AuthorChangedPath(relativePath, action);
+                }
+
+                if (changedPaths.Count > 0)
+                {
+                    revisions.Add(
+                        new AuthorRevisionChange(
+                            revision,
+                            author,
+                            dateText,
+                            FindElement(logEntry, "msg")?.Value ?? string.Empty,
+                            changedPaths.Values.OrderBy(path => path.RelativePath, StringComparer.Ordinal).ToArray()));
                 }
             }
 
-            return new AuthorChangeSet(exportPaths, deletedPaths);
+            return new AuthorChangeSet(revisions);
         }
         catch (XmlException ex)
         {
             throw new InvalidOperationException("无法解析 SVN 账号修改记录。", ex);
         }
+    }
+
+    private static bool IsPathIncluded(
+        string relativePath,
+        IReadOnlyList<string> subdirectories,
+        IReadOnlyList<string> filePatterns)
+    {
+        bool isInSelectedDirectory = subdirectories.Any(
+            subdirectory =>
+                string.Equals(relativePath, subdirectory, StringComparison.OrdinalIgnoreCase) ||
+                relativePath.StartsWith(subdirectory.TrimEnd('/') + "/", StringComparison.OrdinalIgnoreCase));
+        if (!isInSelectedDirectory)
+        {
+            return false;
+        }
+
+        string fileName = GetFileName(relativePath);
+        return filePatterns.Any(
+            pattern => FileSystemName.MatchesSimpleExpression(pattern, fileName, ignoreCase: true));
+    }
+
+    private static void AppendDiffFileHeader(
+        StringBuilder builder,
+        string author,
+        string startRevision,
+        string endRevision,
+        IReadOnlyList<string> subdirectories,
+        IReadOnlyList<string> filePatterns)
+    {
+        builder.AppendLine("# SVN 账号修改记录");
+        builder.AppendLine($"# 账号: {author}");
+        builder.AppendLine(
+            startRevision.Length == 0
+                ? $"# 版本范围: 本地当天 00:00 至 {endRevision}（含边界）"
+                : $"# 版本范围: {startRevision}:{endRevision}（含边界）");
+        builder.AppendLine($"# 导出子目录: {string.Join(", ", subdirectories)}");
+        builder.AppendLine($"# 导出文件类型: {string.Join(", ", filePatterns)}");
+        builder.AppendLine();
+    }
+
+    private static void AppendRevisionHeader(StringBuilder builder, AuthorRevisionChange revisionChange)
+    {
+        builder.AppendLine("################################################################################");
+        builder.AppendLine($"# SVN 版本: r{revisionChange.Revision}");
+        builder.AppendLine($"# 作者: {revisionChange.Author}");
+        builder.AppendLine($"# 时间: {revisionChange.DateText}");
+
+        string normalizedMessage = revisionChange.Message.Replace("\r\n", "\n").Replace('\r', '\n');
+        string[] messageLines = normalizedMessage.Split('\n');
+        if (messageLines.Length == 0 || messageLines.All(line => line.Length == 0))
+        {
+            builder.AppendLine("# 提交说明:");
+        }
+        else
+        {
+            builder.AppendLine($"# 提交说明: {messageLines[0]}");
+            foreach (string line in messageLines.Skip(1))
+            {
+                builder.AppendLine($"#           {line}");
+            }
+        }
+
+        builder.AppendLine("################################################################################");
+        builder.AppendLine();
     }
 
     private static string ValidateLocalRoot(string localRoot)
@@ -502,7 +636,7 @@ public sealed class SvnExportService : ISvnExportService
     {
         if (subdirectories is null || subdirectories.Count == 0)
         {
-            throw new InvalidOperationException("版本导出至少需要一个导出子目录。");
+            throw new InvalidOperationException("导出至少需要一个导出子目录。");
         }
 
         var normalized = new List<string>();
@@ -542,7 +676,7 @@ public sealed class SvnExportService : ISvnExportService
     {
         if (filePatterns is null || filePatterns.Count == 0)
         {
-            throw new InvalidOperationException("版本导出至少需要一种导出文件类型。");
+            throw new InvalidOperationException("导出至少需要一种导出文件类型。");
         }
 
         string[] patterns = filePatterns
@@ -559,14 +693,15 @@ public sealed class SvnExportService : ISvnExportService
         return patterns;
     }
 
-    private static HashSet<string> NormalizeAuthors(IReadOnlyList<string>? authors)
+    private static IReadOnlyList<string> NormalizeAuthors(IReadOnlyList<string>? authors)
     {
         return authors is null
-            ? new HashSet<string>(StringComparer.Ordinal)
+            ? Array.Empty<string>()
             : authors
                 .Select(author => author?.Trim() ?? string.Empty)
                 .Where(author => author.Length > 0)
-                .ToHashSet(StringComparer.Ordinal);
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
     }
 
     private static string GetSafeDestinationPath(string destinationRoot, string relativePath)
@@ -721,7 +856,14 @@ public sealed class SvnExportService : ISvnExportService
 
     private sealed record ExportCandidate(string RelativePath, string SourceUrl);
 
-    private sealed record AuthorChangeSet(
-        HashSet<string> ExportPaths,
-        HashSet<string> DeletedPaths);
+    private sealed record AuthorChangeSet(IReadOnlyList<AuthorRevisionChange> Revisions);
+
+    private sealed record AuthorRevisionChange(
+        long Revision,
+        string Author,
+        string DateText,
+        string Message,
+        IReadOnlyList<AuthorChangedPath> Paths);
+
+    private sealed record AuthorChangedPath(string RelativePath, string Action);
 }
