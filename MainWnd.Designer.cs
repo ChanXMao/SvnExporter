@@ -175,7 +175,7 @@
             lb_ExportAuthor.FormattingEnabled = true;
             lb_ExportAuthor.ItemHeight = 19;
             lb_ExportAuthor.Location = new Point(32, 49);
-            lb_ExportAuthor.Margin = new Padding(2, 2, 2, 2);
+            lb_ExportAuthor.Margin = new Padding(2);
             lb_ExportAuthor.Name = "lb_ExportAuthor";
             lb_ExportAuthor.SelectionMode = SelectionMode.MultiExtended;
             lb_ExportAuthor.Size = new Size(250, 137);
@@ -207,7 +207,7 @@
             lb_AllAuthor.FormattingEnabled = true;
             lb_AllAuthor.ItemHeight = 19;
             lb_AllAuthor.Location = new Point(378, 49);
-            lb_AllAuthor.Margin = new Padding(2, 2, 2, 2);
+            lb_AllAuthor.Margin = new Padding(2);
             lb_AllAuthor.Name = "lb_AllAuthor";
             lb_AllAuthor.SelectionMode = SelectionMode.MultiExtended;
             lb_AllAuthor.Size = new Size(250, 137);
@@ -250,9 +250,9 @@
             groupBox1.Controls.Add(label1);
             groupBox1.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
             groupBox1.Location = new Point(3, 3);
-            groupBox1.Margin = new Padding(2, 2, 2, 2);
+            groupBox1.Margin = new Padding(2);
             groupBox1.Name = "groupBox1";
-            groupBox1.Padding = new Padding(2, 2, 2, 2);
+            groupBox1.Padding = new Padding(2);
             groupBox1.Size = new Size(840, 216);
             groupBox1.TabIndex = 17;
             groupBox1.TabStop = false;
@@ -266,7 +266,7 @@
             cb_ExportVersion.CheckState = CheckState.Checked;
             cb_ExportVersion.Font = new Font("Microsoft YaHei UI", 10F);
             cb_ExportVersion.Location = new Point(555, 176);
-            cb_ExportVersion.Margin = new Padding(2, 2, 2, 2);
+            cb_ExportVersion.Margin = new Padding(2);
             cb_ExportVersion.Name = "cb_ExportVersion";
             cb_ExportVersion.Size = new Size(100, 27);
             cb_ExportVersion.TabIndex = 10;
@@ -279,7 +279,7 @@
             btn_DebugMode.AutoSize = true;
             btn_DebugMode.Font = new Font("Microsoft YaHei UI", 9F);
             btn_DebugMode.Location = new Point(675, 177);
-            btn_DebugMode.Margin = new Padding(2, 2, 2, 2);
+            btn_DebugMode.Margin = new Padding(2);
             btn_DebugMode.Name = "btn_DebugMode";
             btn_DebugMode.Size = new Size(91, 24);
             btn_DebugMode.TabIndex = 21;
@@ -304,9 +304,9 @@
             groupBox2.Controls.Add(label6);
             groupBox2.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
             groupBox2.Location = new Point(3, 219);
-            groupBox2.Margin = new Padding(2, 2, 2, 2);
+            groupBox2.Margin = new Padding(2);
             groupBox2.Name = "groupBox2";
-            groupBox2.Padding = new Padding(2, 2, 2, 2);
+            groupBox2.Padding = new Padding(2);
             groupBox2.Size = new Size(840, 250);
             groupBox2.TabIndex = 18;
             groupBox2.TabStop = false;
@@ -320,7 +320,7 @@
             cb_ClearOutputPath.CheckState = CheckState.Checked;
             cb_ClearOutputPath.Font = new Font("Microsoft YaHei UI", 10F);
             cb_ClearOutputPath.Location = new Point(675, 210);
-            cb_ClearOutputPath.Margin = new Padding(2, 2, 2, 2);
+            cb_ClearOutputPath.Margin = new Padding(2);
             cb_ClearOutputPath.Name = "cb_ClearOutputPath";
             cb_ClearOutputPath.Size = new Size(134, 27);
             cb_ClearOutputPath.TabIndex = 22;
@@ -333,7 +333,7 @@
             cb_ExportModify.AutoSize = true;
             cb_ExportModify.Font = new Font("Microsoft YaHei UI", 10F);
             cb_ExportModify.Location = new Point(555, 212);
-            cb_ExportModify.Margin = new Padding(2, 2, 2, 2);
+            cb_ExportModify.Margin = new Padding(2);
             cb_ExportModify.Name = "cb_ExportModify";
             cb_ExportModify.Size = new Size(100, 27);
             cb_ExportModify.TabIndex = 11;
@@ -389,7 +389,7 @@
             rtb_Console.BackColor = Color.Black;
             rtb_Console.ForeColor = Color.LawnGreen;
             rtb_Console.Location = new Point(3, 531);
-            rtb_Console.Margin = new Padding(2, 2, 2, 2);
+            rtb_Console.Margin = new Padding(2);
             rtb_Console.Name = "rtb_Console";
             rtb_Console.ReadOnly = true;
             rtb_Console.Size = new Size(842, 234);
@@ -401,7 +401,7 @@
             btn_SaveConfig.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             btn_SaveConfig.Font = new Font("Microsoft YaHei UI", 9F);
             btn_SaveConfig.Location = new Point(741, 11);
-            btn_SaveConfig.Margin = new Padding(2, 2, 2, 2);
+            btn_SaveConfig.Margin = new Padding(2);
             btn_SaveConfig.Name = "btn_SaveConfig";
             btn_SaveConfig.Size = new Size(84, 39);
             btn_SaveConfig.TabIndex = 20;
@@ -439,9 +439,9 @@
             groupBox3.Controls.Add(label8);
             groupBox3.Controls.Add(btn_Export);
             groupBox3.Location = new Point(3, 469);
-            groupBox3.Margin = new Padding(2, 2, 2, 2);
+            groupBox3.Margin = new Padding(2);
             groupBox3.Name = "groupBox3";
-            groupBox3.Padding = new Padding(2, 2, 2, 2);
+            groupBox3.Padding = new Padding(2);
             groupBox3.Size = new Size(840, 62);
             groupBox3.TabIndex = 22;
             groupBox3.TabStop = false;
@@ -469,7 +469,7 @@
             Controls.Add(groupBox1);
             MinimumSize = new Size(734, 550);
             Name = "MainWnd";
-            Text = "SvnExporter    by 陈小猫 izchemo@gmail.com";
+            Text = "SvnExporter    by 陈小猫 izchemo@gmail.com    ver 1.0";
             groupBox1.ResumeLayout(false);
             groupBox1.PerformLayout();
             groupBox2.ResumeLayout(false);

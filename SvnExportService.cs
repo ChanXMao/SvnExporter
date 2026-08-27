@@ -622,7 +622,11 @@ public sealed class SvnExportService : ISvnExportService
             return "HEAD";
         }
 
-        if (!long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out long number) || number < 0)
+        if (!long.TryParse(
+                value,
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out long number))
         {
             throw new InvalidOperationException($"{fieldName}必须是大于或等于 0 的整数，也可以留空。");
         }

@@ -142,18 +142,25 @@ public partial class MainWnd : Form
                 return;
             }
 
+            string versionDirectoryName = $"{projectRootDirectoryName}_{versionRequest.Revision}";
             versionRequest = versionRequest with
             {
-                DestinationDirectory = Path.Combine(outputDirectory, projectRootDirectoryName)
+                DestinationDirectory = Path.Combine(outputDirectory, versionDirectoryName)
             };
         }
 
-        authorRequest = authorRequest is null
-            ? null
-            : authorRequest with
+        if (authorRequest is not null)
+        {
+            string startRevisionLabel = authorRequest.StartRevision.Length == 0
+                ? DateTime.Today.ToString("yyyyMMdd", CultureInfo.InvariantCulture)
+                : authorRequest.StartRevision;
+            string modifyRecordDirectoryName =
+                $"{ModifyRecordDirectoryName}-{startRevisionLabel}_{authorRequest.EndRevision}";
+            authorRequest = authorRequest with
             {
-                DestinationDirectory = Path.Combine(outputDirectory, ModifyRecordDirectoryName)
+                DestinationDirectory = Path.Combine(outputDirectory, modifyRecordDirectoryName)
             };
+        }
 
         if (btn_DebugMode.Checked)
         {
@@ -447,13 +454,17 @@ public partial class MainWnd : Form
             return true;
         }
 
-        if (!long.TryParse(revision, out long number) || number < 0)
+        if (!long.TryParse(
+                revision,
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out long number))
         {
             ShowValidationError($"{fieldName}必须是大于或等于 0 的整数，也可以留空。");
             return false;
         }
 
-        revision = number.ToString();
+        revision = number.ToString(CultureInfo.InvariantCulture);
         return true;
     }
 
