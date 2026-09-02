@@ -73,9 +73,22 @@ public sealed class SvnExportService : ISvnExportService
 
         string localRoot = ValidateLocalRoot(request.LocalRootPath);
         string destinationRoot = ValidateDestination(request.DestinationDirectory);
-        string revision = NormalizeRevision(request.Revision, "工程导出版本号", emptyMeansHead: true);
+        string revision = request.UseLocalFiles
+            ? "HEAD"
+            : NormalizeRevision(request.Revision, "工程导出版本号", emptyMeansHead: true);
         IReadOnlyList<string> subdirectories = NormalizeSubdirectories(request.Subdirectories, localRoot);
         IReadOnlyList<string> filePatterns = NormalizeFilePatterns(request.FilePatterns);
+
+        if (request.UseLocalFiles)
+        {
+            return await ExportLocalVersionSnapshotAsync(
+                localRoot,
+                destinationRoot,
+                subdirectories,
+                filePatterns,
+                output,
+                cancellationToken);
+        }
 
         Directory.CreateDirectory(destinationRoot);
         SvnWorkingCopyInfo workingCopy = await GetWorkingCopyInfoAsync(localRoot, output, cancellationToken);
@@ -166,6 +179,218 @@ public sealed class SvnExportService : ISvnExportService
         string summary = $"版本导出完成：成功导出 {exportedCount} 个文件，跳过 {skippedCount} 个文件。";
         Report(output, summary, allCommandsSucceeded ? SvnMessageKind.Success : SvnMessageKind.Error);
         return new SvnExportResult(allCommandsSucceeded, exportedCount, skippedCount, 0, summary);
+    }
+
+    private static async Task<SvnExportResult> ExportLocalVersionSnapshotAsync(
+        string localRoot,
+        string destinationRoot,
+        IReadOnlyList<string> subdirectories,
+        IReadOnlyList<string> filePatterns,
+        Action<SvnConsoleMessage>? output,
+        CancellationToken cancellationToken)
+    {
+        if (PathsOverlap(localRoot, destinationRoot))
+        {
+            throw new InvalidOperationException(
+                "本地版本导出的源目录与目标目录不能相同，也不能互为父目录或子目录。");
+        }
+
+        Directory.CreateDirectory(destinationRoot);
+        var candidates = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        int skippedCount = 0;
+        bool allFilesSucceeded = true;
+
+        foreach (string subdirectory in subdirectories)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string sourceDirectory = Path.GetFullPath(
+                Path.Combine(
+                    localRoot,
+                    Path.Combine(subdirectory.Split('/', StringSplitOptions.RemoveEmptyEntries))));
+            if (!Directory.Exists(sourceDirectory))
+            {
+                skippedCount++;
+                allFilesSucceeded = false;
+                Report(output, $"本地导出子目录不存在：{subdirectory}", SvnMessageKind.Error);
+                continue;
+            }
+
+            FileAttributes sourceDirectoryAttributes;
+            try
+            {
+                sourceDirectoryAttributes = File.GetAttributes(sourceDirectory);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                skippedCount++;
+                allFilesSucceeded = false;
+                Report(output, $"无法读取本地导出子目录“{subdirectory}”：{ex.Message}", SvnMessageKind.Error);
+                continue;
+            }
+
+            if ((sourceDirectoryAttributes & FileAttributes.ReparsePoint) != 0)
+            {
+                skippedCount++;
+                allFilesSucceeded = false;
+                Report(output, $"已跳过目录链接：{subdirectory}", SvnMessageKind.Error);
+                continue;
+            }
+
+            var pendingDirectories = new Stack<string>();
+            pendingDirectories.Push(sourceDirectory);
+            while (pendingDirectories.Count > 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                string currentDirectory = pendingDirectories.Pop();
+                string[] files;
+                string[] directories;
+                try
+                {
+                    files = Directory.GetFiles(currentDirectory);
+                    directories = Directory.GetDirectories(currentDirectory);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    skippedCount++;
+                    allFilesSucceeded = false;
+                    string relativeDirectory = NormalizeRelativePath(
+                        Path.GetRelativePath(localRoot, currentDirectory));
+                    Report(output, $"无法读取本地目录“{relativeDirectory}”：{ex.Message}", SvnMessageKind.Error);
+                    continue;
+                }
+
+                foreach (string filePath in files)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    FileAttributes fileAttributes;
+                    try
+                    {
+                        fileAttributes = File.GetAttributes(filePath);
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        skippedCount++;
+                        allFilesSucceeded = false;
+                        Report(output, $"无法读取本地文件“{filePath}”：{ex.Message}", SvnMessageKind.Error);
+                        continue;
+                    }
+
+                    string relativePath = NormalizeRelativePath(Path.GetRelativePath(localRoot, filePath));
+                    if ((fileAttributes & FileAttributes.ReparsePoint) != 0)
+                    {
+                        skippedCount++;
+                        allFilesSucceeded = false;
+                        Report(output, $"已跳过文件链接：{relativePath}", SvnMessageKind.Error);
+                        continue;
+                    }
+
+                    string fileName = GetFileName(relativePath);
+                    if (!filePatterns.Any(
+                            pattern => FileSystemName.MatchesSimpleExpression(pattern, fileName, ignoreCase: true)))
+                    {
+                        skippedCount++;
+                        continue;
+                    }
+
+                    candidates.TryAdd(relativePath, filePath);
+                }
+
+                foreach (string directoryPath in directories)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    FileAttributes directoryAttributes;
+                    try
+                    {
+                        directoryAttributes = File.GetAttributes(directoryPath);
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        skippedCount++;
+                        allFilesSucceeded = false;
+                        Report(output, $"无法读取本地目录“{directoryPath}”：{ex.Message}", SvnMessageKind.Error);
+                        continue;
+                    }
+
+                    if ((directoryAttributes & FileAttributes.ReparsePoint) != 0)
+                    {
+                        skippedCount++;
+                        allFilesSucceeded = false;
+                        string relativeDirectory = NormalizeRelativePath(
+                            Path.GetRelativePath(localRoot, directoryPath));
+                        Report(output, $"已跳过目录链接：{relativeDirectory}", SvnMessageKind.Error);
+                        continue;
+                    }
+
+                    pendingDirectories.Push(directoryPath);
+                }
+            }
+        }
+
+        int exportedCount = 0;
+        foreach ((string relativePath, string sourcePath) in candidates
+                     .OrderBy(item => item.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string targetPath;
+            try
+            {
+                targetPath = GetSafeDestinationPath(destinationRoot, relativePath);
+                string? parentDirectory = Path.GetDirectoryName(targetPath);
+                if (!string.IsNullOrEmpty(parentDirectory))
+                {
+                    Directory.CreateDirectory(parentDirectory);
+                }
+
+                if (File.Exists(targetPath))
+                {
+                    FileAttributes targetAttributes = File.GetAttributes(targetPath);
+                    if ((targetAttributes & FileAttributes.ReadOnly) != 0)
+                    {
+                        File.SetAttributes(targetPath, targetAttributes & ~FileAttributes.ReadOnly);
+                    }
+                }
+
+                Report(output, $"复制本地文件：{relativePath}", SvnMessageKind.Normal);
+                await CopyLocalFileAsync(sourcePath, targetPath, cancellationToken);
+                exportedCount++;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                skippedCount++;
+                allFilesSucceeded = false;
+                Report(output, $"无法复制本地文件“{relativePath}”：{ex.Message}", SvnMessageKind.Error);
+            }
+        }
+
+        string summary = $"本地版本导出完成：成功复制 {exportedCount} 个文件，跳过 {skippedCount} 个文件或目录。";
+        Report(output, summary, allFilesSucceeded ? SvnMessageKind.Success : SvnMessageKind.Error);
+        return new SvnExportResult(allFilesSucceeded, exportedCount, skippedCount, 0, summary);
+    }
+
+    private static async Task CopyLocalFileAsync(
+        string sourcePath,
+        string targetPath,
+        CancellationToken cancellationToken)
+    {
+        await using (var sourceStream = new FileStream(
+                         sourcePath,
+                         FileMode.Open,
+                         FileAccess.Read,
+                         FileShare.Read,
+                         bufferSize: 81920,
+                         FileOptions.Asynchronous | FileOptions.SequentialScan))
+        await using (var targetStream = new FileStream(
+                         targetPath,
+                         FileMode.Create,
+                         FileAccess.Write,
+                         FileShare.None,
+                         bufferSize: 81920,
+                         FileOptions.Asynchronous | FileOptions.SequentialScan))
+        {
+            await sourceStream.CopyToAsync(targetStream, cancellationToken);
+        }
+
+        File.SetLastWriteTimeUtc(targetPath, File.GetLastWriteTimeUtc(sourcePath));
     }
 
     public async Task<SvnExportResult> ExportAuthorChangesAsync(
@@ -791,6 +1016,21 @@ public sealed class SvnExportService : ISvnExportService
     {
         string fullPath = Path.GetFullPath(path);
         return Path.EndsInDirectorySeparator(fullPath) ? fullPath : fullPath + Path.DirectorySeparatorChar;
+    }
+
+    private static bool PathsOverlap(string firstPath, string secondPath)
+    {
+        return IsSameOrChildPath(firstPath, secondPath) || IsSameOrChildPath(secondPath, firstPath);
+    }
+
+    private static bool IsSameOrChildPath(string candidatePath, string basePath)
+    {
+        string candidateFullPath = Path.GetFullPath(candidatePath);
+        string baseFullPath = Path.GetFullPath(basePath);
+        return string.Equals(candidateFullPath, baseFullPath, StringComparison.OrdinalIgnoreCase) ||
+               candidateFullPath.StartsWith(
+                   EnsureTrailingDirectorySeparator(baseFullPath),
+                   StringComparison.OrdinalIgnoreCase);
     }
 
     private static XElement? FindElement(XContainer container, string localName)

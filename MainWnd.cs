@@ -32,6 +32,7 @@ public partial class MainWnd : Form
         UpdateAuthorListLayout();
         LoadConfig();
         UpdateModuleColors();
+        UpdateLocalExportState();
     }
 
     private void BindEvents()
@@ -45,6 +46,7 @@ public partial class MainWnd : Form
         btn_RemoveForExport.Click += RemoveFromExportButton_Click;
         btn_Export.Click += ExportButton_Click;
         cb_ExportVersion.CheckedChanged += ExportSwitch_CheckedChanged;
+        cb_ExportLocal.CheckedChanged += LocalExportSwitch_CheckedChanged;
         cb_ExportModify.CheckedChanged += ExportSwitch_CheckedChanged;
         groupBox2.Resize += AuthorExportGroupBox_Resize;
         FormClosing += MainWnd_FormClosing;
@@ -142,7 +144,9 @@ public partial class MainWnd : Form
                 return;
             }
 
-            string versionDirectoryName = $"{projectRootDirectoryName}_{versionRequest.Revision}";
+            string versionDirectoryName = CreateVersionDirectoryName(
+                projectRootDirectoryName,
+                versionRequest);
             versionRequest = versionRequest with
             {
                 DestinationDirectory = Path.Combine(outputDirectory, versionDirectoryName)
@@ -154,8 +158,9 @@ public partial class MainWnd : Form
             string startRevisionLabel = authorRequest.StartRevision.Length == 0
                 ? DateTime.Today.ToString("yyyyMMdd", CultureInfo.InvariantCulture)
                 : authorRequest.StartRevision;
-            string modifyRecordDirectoryName =
-                $"{ModifyRecordDirectoryName}-{startRevisionLabel}_{authorRequest.EndRevision}";
+            string modifyRecordDirectoryName = CreateModifyRecordDirectoryName(
+                startRevisionLabel,
+                authorRequest.EndRevision);
             authorRequest = authorRequest with
             {
                 DestinationDirectory = Path.Combine(outputDirectory, modifyRecordDirectoryName)
@@ -344,7 +349,12 @@ public partial class MainWnd : Form
             return false;
         }
 
-        if (!TryNormalizeRevision(tb_VersionNum.Text, "工程导出版本号", out string endRevision))
+        string endRevision;
+        if (cb_ExportLocal.Checked)
+        {
+            endRevision = "HEAD";
+        }
+        else if (!TryNormalizeRevision(tb_VersionNum.Text, "工程导出版本号", out endRevision))
         {
             return false;
         }
@@ -394,7 +404,8 @@ public partial class MainWnd : Form
                 subdirectories,
                 filePatterns,
                 endRevision,
-                string.Empty);
+                string.Empty,
+                cb_ExportLocal.Checked);
         }
 
         if (cb_ExportModify.Checked)
@@ -439,6 +450,20 @@ public partial class MainWnd : Form
         }
 
         return true;
+    }
+
+    private static string CreateVersionDirectoryName(
+        string projectRootDirectoryName,
+        VersionExportRequest request)
+    {
+        return request.UseLocalFiles
+            ? $"{projectRootDirectoryName}_local"
+            : $"{projectRootDirectoryName}_{request.Revision}";
+    }
+
+    private static string CreateModifyRecordDirectoryName(string startRevisionLabel, string endRevision)
+    {
+        return $"{ModifyRecordDirectoryName}-{startRevisionLabel}_{endRevision}";
     }
 
     private bool TryNormalizeRevision(
@@ -488,31 +513,47 @@ public partial class MainWnd : Form
 
         if (versionRequest is not null)
         {
-            AppendConsole("【版本导出】", Color.White);
-            AppendDebugCommand(["info", "--xml", "--non-interactive", versionRequest.LocalRootPath]);
-
-            foreach (string subdirectory in versionRequest.Subdirectories)
+            if (versionRequest.UseLocalFiles)
             {
-                string localSubdirectory = Path.Combine(
-                    versionRequest.LocalRootPath,
-                    subdirectory.Replace('/', Path.DirectorySeparatorChar));
+                AppendConsole("【本地版本导出】", Color.White);
+                AppendConsole(
+                    $"源目录：{versionRequest.LocalRootPath}；目标目录：{versionRequest.DestinationDirectory}",
+                    Color.White);
+                AppendConsole(
+                    $"说明：实际执行时会递归读取子目录“{string.Join(", ", versionRequest.Subdirectories)}”，筛选文件类型“{string.Join(", ", versionRequest.FilePatterns)}”，并将匹配文件按原相对路径复制到目标目录。调试模式不会读取或复制文件。",
+                    Color.White);
+                AppendConsole(
+                    $"[动态模板] 复制 “{Path.Combine(versionRequest.LocalRootPath, "<匹配文件相对路径>")}” → “{Path.Combine(versionRequest.DestinationDirectory, "<匹配文件相对路径>")}”",
+                    Color.White);
+            }
+            else
+            {
+                AppendConsole("【版本导出】", Color.White);
+                AppendDebugCommand(["info", "--xml", "--non-interactive", versionRequest.LocalRootPath]);
+
+                foreach (string subdirectory in versionRequest.Subdirectories)
+                {
+                    string localSubdirectory = Path.Combine(
+                        versionRequest.LocalRootPath,
+                        subdirectory.Replace('/', Path.DirectorySeparatorChar));
+                    AppendDebugCommand(
+                    [
+                        "list", "--xml", "--recursive", "--revision", versionRequest.Revision,
+                        "--non-interactive", AppendPegRevision(localSubdirectory, versionRequest.Revision)
+                    ]);
+                }
+
+                AppendConsole(
+                    $"说明：实际执行时会解析上述 list 结果，筛选文件类型“{string.Join(", ", versionRequest.FilePatterns)}”，再为每个匹配文件生成以下命令。调试模式未执行 list，因此这里只能输出动态模板。",
+                    Color.White);
                 AppendDebugCommand(
                 [
-                    "list", "--xml", "--recursive", "--revision", versionRequest.Revision,
-                    "--non-interactive", AppendPegRevision(localSubdirectory, versionRequest.Revision)
-                ]);
+                    "export", "--force", "--quiet", "--revision", versionRequest.Revision,
+                    "--non-interactive", $"<匹配文件的 SVN URL>@{versionRequest.Revision}",
+                    Path.Combine(versionRequest.DestinationDirectory, "<原相对路径>")
+                ],
+                "[动态模板] ");
             }
-
-            AppendConsole(
-                $"说明：实际执行时会解析上述 list 结果，筛选文件类型“{string.Join(", ", versionRequest.FilePatterns)}”，再为每个匹配文件生成以下命令。调试模式未执行 list，因此这里只能输出动态模板。",
-                Color.White);
-            AppendDebugCommand(
-            [
-                "export", "--force", "--quiet", "--revision", versionRequest.Revision,
-                "--non-interactive", $"<匹配文件的 SVN URL>@{versionRequest.Revision}",
-                Path.Combine(versionRequest.DestinationDirectory, "<原相对路径>")
-            ],
-            "[动态模板] ");
         }
 
         if (authorRequest is not null)
@@ -586,6 +627,7 @@ public partial class MainWnd : Form
         btn_AddToExport.Enabled = !exporting;
         btn_RemoveForExport.Enabled = !exporting;
         cb_ExportVersion.Enabled = !exporting;
+        cb_ExportLocal.Enabled = !exporting;
         cb_ExportModify.Enabled = !exporting;
         btn_DebugMode.Enabled = !exporting;
         groupBox1.Enabled = !exporting;
@@ -593,6 +635,11 @@ public partial class MainWnd : Form
         groupBox3.Enabled = !exporting;
         UseWaitCursor = exporting;
         btn_Export.Text = exporting ? "导出中" : "导出";
+
+        if (!exporting)
+        {
+            UpdateLocalExportState();
+        }
     }
 
     private void ShowValidationError(string message)
@@ -787,6 +834,18 @@ public partial class MainWnd : Form
         UpdateModuleColors();
     }
 
+    private void LocalExportSwitch_CheckedChanged(object? sender, EventArgs e)
+    {
+        UpdateLocalExportState();
+    }
+
+    private void UpdateLocalExportState()
+    {
+        bool versionInputEnabled = !cb_ExportLocal.Checked;
+        tb_VersionNum.Enabled = versionInputEnabled;
+        label1.Enabled = versionInputEnabled;
+    }
+
     private void UpdateModuleColors()
     {
         groupBox1.BackColor = cb_ExportVersion.Checked ? _versionExportColor : Color.Gray;
@@ -805,6 +864,7 @@ public partial class MainWnd : Form
             tb_BeginVersionNum.Text = config.BeginVersionNumber;
             tb_ExportPath.Text = config.OutputPath;
             cb_ExportVersion.Checked = config.ExportVersionEnabled;
+            cb_ExportLocal.Checked = config.ExportLocalEnabled;
             cb_ExportModify.Checked = config.ExportAuthorChangesEnabled;
 
             lb_AllAuthor.Items.Clear();
@@ -835,6 +895,7 @@ public partial class MainWnd : Form
             ExportFileType = tb_ExportFileType.Text.Trim(),
             ProjectVersionNumber = tb_VersionNum.Text.Trim(),
             ExportVersionEnabled = cb_ExportVersion.Checked,
+            ExportLocalEnabled = cb_ExportLocal.Checked,
             ExportAuthors = GetAllItems(lb_ExportAuthor),
             AllAuthors = GetAllItems(lb_AllAuthor),
             BeginVersionNumber = tb_BeginVersionNum.Text.Trim(),

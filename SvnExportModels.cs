@@ -31,7 +31,8 @@ public sealed record VersionExportRequest(
     IReadOnlyList<string> Subdirectories,
     IReadOnlyList<string> FilePatterns,
     string Revision,
-    string DestinationDirectory);
+    string DestinationDirectory,
+    bool UseLocalFiles = false);
 
 /// <summary>
 /// 按账号导出修改记录所需的参数。

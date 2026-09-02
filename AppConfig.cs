@@ -40,6 +40,8 @@ public sealed class AppConfig
 
     public bool ExportVersionEnabled { get; set; } = true;
 
+    public bool ExportLocalEnabled { get; set; }
+
     public List<string> ExportAuthors
     {
         get => _exportAuthors;
