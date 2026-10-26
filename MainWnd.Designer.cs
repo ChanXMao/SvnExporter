@@ -49,6 +49,7 @@
             cb_ExportVersion = new CheckBox();
             btn_DebugMode = new CheckBox();
             groupBox2 = new GroupBox();
+            cb_ExportAllAccout = new CheckBox();
             cb_ClearOutputPath = new CheckBox();
             cb_ExportModify = new CheckBox();
             btn_RemoveAuthor = new Button();
@@ -91,7 +92,7 @@
             // 
             btn_Export.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             btn_Export.Font = new Font("Microsoft YaHei UI", 14F);
-            btn_Export.Location = new Point(646, 11);
+            btn_Export.Location = new Point(646, 16);
             btn_Export.Name = "btn_Export";
             btn_Export.Size = new Size(84, 39);
             btn_Export.TabIndex = 2;
@@ -125,7 +126,7 @@
             btn_Browse.Font = new Font("Microsoft YaHei UI", 9F);
             btn_Browse.Location = new Point(757, 32);
             btn_Browse.Name = "btn_Browse";
-            btn_Browse.Size = new Size(72, 26);
+            btn_Browse.Size = new Size(72, 29);
             btn_Browse.TabIndex = 5;
             btn_Browse.Text = "浏览";
             btn_Browse.UseVisualStyleBackColor = true;
@@ -175,7 +176,7 @@
             lb_ExportAuthor.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left;
             lb_ExportAuthor.FormattingEnabled = true;
             lb_ExportAuthor.ItemHeight = 19;
-            lb_ExportAuthor.Location = new Point(32, 49);
+            lb_ExportAuthor.Location = new Point(32, 60);
             lb_ExportAuthor.Margin = new Padding(2);
             lb_ExportAuthor.Name = "lb_ExportAuthor";
             lb_ExportAuthor.SelectionMode = SelectionMode.MultiExtended;
@@ -207,7 +208,7 @@
             lb_AllAuthor.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left;
             lb_AllAuthor.FormattingEnabled = true;
             lb_AllAuthor.ItemHeight = 19;
-            lb_AllAuthor.Location = new Point(378, 49);
+            lb_AllAuthor.Location = new Point(378, 60);
             lb_AllAuthor.Margin = new Padding(2);
             lb_AllAuthor.Name = "lb_AllAuthor";
             lb_AllAuthor.SelectionMode = SelectionMode.MultiExtended;
@@ -217,7 +218,7 @@
             // btn_AddToExport
             // 
             btn_AddToExport.Font = new Font("Microsoft YaHei UI", 10F);
-            btn_AddToExport.Location = new Point(293, 70);
+            btn_AddToExport.Location = new Point(293, 74);
             btn_AddToExport.Name = "btn_AddToExport";
             btn_AddToExport.Size = new Size(72, 30);
             btn_AddToExport.TabIndex = 15;
@@ -227,7 +228,7 @@
             // btn_RemoveForExport
             // 
             btn_RemoveForExport.Font = new Font("Microsoft YaHei UI", 10F);
-            btn_RemoveForExport.Location = new Point(293, 132);
+            btn_RemoveForExport.Location = new Point(293, 136);
             btn_RemoveForExport.Name = "btn_RemoveForExport";
             btn_RemoveForExport.Size = new Size(72, 30);
             btn_RemoveForExport.TabIndex = 16;
@@ -261,7 +262,7 @@
             groupBox1.Text = "版本导出";
             // 
             // cb_ExportLocal
-            //
+            // 
             cb_ExportLocal.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
             cb_ExportLocal.AutoSize = true;
             cb_ExportLocal.Font = new Font("Microsoft YaHei UI", 10F);
@@ -272,7 +273,7 @@
             cb_ExportLocal.TabIndex = 22;
             cb_ExportLocal.Text = "本地导出";
             cb_ExportLocal.UseVisualStyleBackColor = true;
-            //
+            // 
             // cb_ExportVersion
             // 
             cb_ExportVersion.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
@@ -305,6 +306,7 @@
             // 
             groupBox2.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             groupBox2.BackColor = Color.DarkKhaki;
+            groupBox2.Controls.Add(cb_ExportAllAccout);
             groupBox2.Controls.Add(cb_ClearOutputPath);
             groupBox2.Controls.Add(cb_ExportModify);
             groupBox2.Controls.Add(btn_RemoveAuthor);
@@ -326,6 +328,19 @@
             groupBox2.TabIndex = 18;
             groupBox2.TabStop = false;
             groupBox2.Text = "账号修改导出";
+            // 
+            // cb_ExportAllAccout
+            // 
+            cb_ExportAllAccout.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
+            cb_ExportAllAccout.AutoSize = true;
+            cb_ExportAllAccout.Font = new Font("Microsoft YaHei UI", 10F);
+            cb_ExportAllAccout.Location = new Point(148, 25);
+            cb_ExportAllAccout.Margin = new Padding(2);
+            cb_ExportAllAccout.Name = "cb_ExportAllAccout";
+            cb_ExportAllAccout.Size = new Size(134, 27);
+            cb_ExportAllAccout.TabIndex = 23;
+            cb_ExportAllAccout.Text = "导出全部账号";
+            cb_ExportAllAccout.UseVisualStyleBackColor = true;
             // 
             // cb_ClearOutputPath
             // 
@@ -359,7 +374,7 @@
             // 
             btn_RemoveAuthor.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             btn_RemoveAuthor.Font = new Font("Microsoft YaHei UI", 10F);
-            btn_RemoveAuthor.Location = new Point(663, 106);
+            btn_RemoveAuthor.Location = new Point(663, 116);
             btn_RemoveAuthor.Name = "btn_RemoveAuthor";
             btn_RemoveAuthor.Size = new Size(130, 42);
             btn_RemoveAuthor.TabIndex = 17;
@@ -370,7 +385,7 @@
             // 
             btn_AddAuthor.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             btn_AddAuthor.Font = new Font("Microsoft YaHei UI", 10F);
-            btn_AddAuthor.Location = new Point(663, 49);
+            btn_AddAuthor.Location = new Point(663, 60);
             btn_AddAuthor.Name = "btn_AddAuthor";
             btn_AddAuthor.Size = new Size(130, 42);
             btn_AddAuthor.TabIndex = 10;
@@ -415,7 +430,7 @@
             // 
             btn_SaveConfig.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             btn_SaveConfig.Font = new Font("Microsoft YaHei UI", 9F);
-            btn_SaveConfig.Location = new Point(741, 11);
+            btn_SaveConfig.Location = new Point(741, 16);
             btn_SaveConfig.Margin = new Padding(2);
             btn_SaveConfig.Name = "btn_SaveConfig";
             btn_SaveConfig.Size = new Size(84, 39);
@@ -468,7 +483,7 @@
             btn_Browse2.Font = new Font("Microsoft YaHei UI", 9F);
             btn_Browse2.Location = new Point(560, 25);
             btn_Browse2.Name = "btn_Browse2";
-            btn_Browse2.Size = new Size(72, 26);
+            btn_Browse2.Size = new Size(72, 29);
             btn_Browse2.TabIndex = 11;
             btn_Browse2.Text = "浏览";
             btn_Browse2.UseVisualStyleBackColor = true;
@@ -529,5 +544,6 @@
         private Button btn_Browse2;
         private CheckBox cb_ClearOutputPath;
         private CheckBox cb_ExportLocal;
+        private CheckBox cb_ExportAllAccout;
     }
 }

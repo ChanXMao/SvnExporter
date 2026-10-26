@@ -33,6 +33,7 @@ public partial class MainWnd : Form
         LoadConfig();
         UpdateModuleColors();
         UpdateLocalExportState();
+        UpdateAuthorSelectionState();
     }
 
     private void BindEvents()
@@ -47,6 +48,7 @@ public partial class MainWnd : Form
         btn_Export.Click += ExportButton_Click;
         cb_ExportVersion.CheckedChanged += ExportSwitch_CheckedChanged;
         cb_ExportLocal.CheckedChanged += LocalExportSwitch_CheckedChanged;
+        cb_ExportAllAccout.CheckedChanged += ExportAllAuthorsSwitch_CheckedChanged;
         cb_ExportModify.CheckedChanged += ExportSwitch_CheckedChanged;
         groupBox2.Resize += AuthorExportGroupBox_Resize;
         FormClosing += MainWnd_FormClosing;
@@ -143,38 +145,20 @@ public partial class MainWnd : Form
                 ShowValidationError("版本导出需要保留主目录名称，因此主目录不能直接选择磁盘根目录或共享根目录。");
                 return;
             }
-
-            string versionDirectoryName = CreateVersionDirectoryName(
-                projectRootDirectoryName,
-                versionRequest);
-            versionRequest = versionRequest with
-            {
-                DestinationDirectory = Path.Combine(outputDirectory, versionDirectoryName)
-            };
-        }
-
-        if (authorRequest is not null)
-        {
-            string startRevisionLabel = authorRequest.StartRevision.Length == 0
-                ? DateTime.Today.ToString("yyyyMMdd", CultureInfo.InvariantCulture)
-                : authorRequest.StartRevision;
-            string modifyRecordDirectoryName = CreateModifyRecordDirectoryName(
-                startRevisionLabel,
-                authorRequest.EndRevision);
-            authorRequest = authorRequest with
-            {
-                DestinationDirectory = Path.Combine(outputDirectory, modifyRecordDirectoryName)
-            };
         }
 
         if (btn_DebugMode.Checked)
         {
+            string previewRevision = cb_ExportLocal.Checked
+                ? "<本地主目录版本号>"
+                : versionRequest?.Revision ?? authorRequest!.EndRevision;
+            if (previewRevision == "HEAD")
+            {
+                previewRevision = "<最新版本号>";
+            }
+            (versionRequest, authorRequest) = SetExportDestinations(
+                versionRequest, authorRequest, outputDirectory, previewRevision);
             OutputDebugCommands(versionRequest, authorRequest);
-            return;
-        }
-
-        if (!TryPrepareOutputDirectory(outputDirectory))
-        {
             return;
         }
 
@@ -184,6 +168,16 @@ public partial class MainWnd : Form
 
         try
         {
+            (versionRequest, authorRequest) = await ResolveExportRequestsAsync(
+                versionRequest, authorRequest, outputDirectory, cb_ExportLocal.Checked,
+                _exportCancellation.Token);
+            // 必须先解析版本及校验范围，再允许清空旧输出，避免解析失败造成数据丢失。
+            _exportCancellation.Token.ThrowIfCancellationRequested();
+            if (!TryPrepareOutputDirectory(outputDirectory))
+            {
+                return;
+            }
+
             bool succeeded = true;
             if (versionRequest is not null)
             {
@@ -410,10 +404,13 @@ public partial class MainWnd : Form
 
         if (cb_ExportModify.Checked)
         {
-            IReadOnlyList<string> authors = GetAllItems(lb_ExportAuthor);
-            if (authors.Count == 0)
+            bool exportAllAuthors = cb_ExportAllAccout.Checked;
+            IReadOnlyList<string> authors = exportAllAuthors
+                ? Array.Empty<string>()
+                : GetAllItems(lb_ExportAuthor);
+            if (!exportAllAuthors && authors.Count == 0)
             {
-                ShowValidationError("账号修改导出已开启，请至少选择一个导出账号。");
+                ShowValidationError("账号修改导出已开启，请至少选择一个导出账号，或勾选“导出全部账号”。");
                 return false;
             }
 
@@ -446,19 +443,75 @@ public partial class MainWnd : Form
                 filePatterns,
                 startRevision,
                 endRevision,
-                string.Empty);
+                string.Empty,
+                exportAllAuthors);
         }
 
         return true;
+    }
+
+    private async Task<(VersionExportRequest?, AuthorExportRequest?)> ResolveExportRequestsAsync(
+        VersionExportRequest? versionRequest,
+        AuthorExportRequest? authorRequest,
+        string outputDirectory,
+        bool useLocalFiles,
+        CancellationToken cancellationToken)
+    {
+        string revision = await _svnExportService.ResolveExportRevisionAsync(
+            versionRequest?.LocalRootPath ?? authorRequest!.LocalRootPath,
+            versionRequest?.Revision ?? authorRequest!.EndRevision,
+            useLocalFiles,
+            HandleSvnMessage,
+            cancellationToken);
+        if (authorRequest is not null && authorRequest.StartRevision.Length > 0 &&
+            long.Parse(authorRequest.StartRevision, CultureInfo.InvariantCulture) >
+            long.Parse(revision, CultureInfo.InvariantCulture))
+        {
+            throw new InvalidOperationException($"起始版本号不能大于实际导出版本号 {revision}。");
+        }
+
+        return SetExportDestinations(versionRequest, authorRequest, outputDirectory, revision);
+    }
+
+    private static (VersionExportRequest?, AuthorExportRequest?) SetExportDestinations(
+        VersionExportRequest? versionRequest,
+        AuthorExportRequest? authorRequest,
+        string outputDirectory,
+        string revision)
+    {
+        if (versionRequest is not null)
+        {
+            versionRequest = versionRequest with { Revision = revision };
+            string rootName = Path.GetFileName(Path.TrimEndingDirectorySeparator(
+                Path.GetFullPath(versionRequest.LocalRootPath)));
+            versionRequest = versionRequest with
+            {
+                DestinationDirectory = Path.Combine(outputDirectory,
+                    CreateVersionDirectoryName(rootName, versionRequest))
+            };
+        }
+
+        if (authorRequest is not null)
+        {
+            string startLabel = authorRequest.StartRevision.Length == 0
+                ? DateTime.Today.ToString("yyyyMMdd", CultureInfo.InvariantCulture)
+                : authorRequest.StartRevision;
+            authorRequest = authorRequest with
+            {
+                EndRevision = revision,
+                DestinationDirectory = Path.Combine(outputDirectory,
+                    CreateModifyRecordDirectoryName(startLabel, revision))
+            };
+        }
+
+        return (versionRequest, authorRequest);
     }
 
     private static string CreateVersionDirectoryName(
         string projectRootDirectoryName,
         VersionExportRequest request)
     {
-        return request.UseLocalFiles
-            ? $"{projectRootDirectoryName}_local"
-            : $"{projectRootDirectoryName}_{request.Revision}";
+        return $"{projectRootDirectoryName}_{request.Revision}";
     }
 
     private static string CreateModifyRecordDirectoryName(string startRevisionLabel, string endRevision)
@@ -511,6 +564,20 @@ public partial class MainWnd : Form
     {
         AppendConsole("========== 调试模式：仅输出命令，不执行 ==========", Color.White);
 
+        string localRoot = versionRequest?.LocalRootPath ?? authorRequest!.LocalRootPath;
+        string revision = versionRequest?.Revision ?? authorRequest!.EndRevision;
+        AppendDebugCommand(["info", "--xml", "--non-interactive", localRoot]);
+        if (revision == "<本地主目录版本号>")
+        {
+            AppendConsole("说明：实际执行时读取主目录自身的工作副本版本（不是最后修改版本），用于两个输出目录及账号修改结束版本；本地复制不会从仓库获取文件。", Color.White);
+        }
+        else if (revision == "<最新版本号>")
+        {
+            AppendDebugCommand(["info", "--xml", "--revision", "HEAD", "--non-interactive",
+                "<仓库根 URL>@HEAD"], "[动态模板] ");
+            AppendConsole("说明：实际执行时将 HEAD 解析并固定为最新数字版本，用于两个输出目录、快照和账号修改结束版本。调试模式不查询实际版本号。", Color.White);
+        }
+
         if (versionRequest is not null)
         {
             if (versionRequest.UseLocalFiles)
@@ -529,7 +596,6 @@ public partial class MainWnd : Form
             else
             {
                 AppendConsole("【版本导出】", Color.White);
-                AppendDebugCommand(["info", "--xml", "--non-interactive", versionRequest.LocalRootPath]);
 
                 foreach (string subdirectory in versionRequest.Subdirectories)
                 {
@@ -559,7 +625,6 @@ public partial class MainWnd : Form
         if (authorRequest is not null)
         {
             AppendConsole("【账号修改导出】", Color.White);
-            AppendDebugCommand(["info", "--xml", "--non-interactive", authorRequest.LocalRootPath]);
 
             string logStartRevision = authorRequest.StartRevision.Length == 0
                 ? CreateTodayRevisionSpec()
@@ -571,8 +636,11 @@ public partial class MainWnd : Form
                 "--non-interactive", AppendPegRevision(authorRequest.LocalRootPath, authorRequest.EndRevision)
             ]);
 
+            string authorDescription = authorRequest.ExportAllAuthors
+                ? "所有账号（从符合条件的 SVN 提交中自动识别，不受界面账号列表限制）"
+                : $"账号“{string.Join(", ", authorRequest.Authors)}”";
             AppendConsole(
-                $"说明：实际执行时会解析上述 log 结果，筛选账号“{string.Join(", ", authorRequest.Authors)}”、子目录“{string.Join(", ", authorRequest.Subdirectories)}”和文件类型“{string.Join(", ", authorRequest.FilePatterns)}”，再按匹配提交和文件生成以下命令。调试模式未执行 log，因此这里只能输出动态模板。",
+                $"说明：实际执行时会解析上述 log 结果，筛选{authorDescription}、子目录“{string.Join(", ", authorRequest.Subdirectories)}”和文件类型“{string.Join(", ", authorRequest.FilePatterns)}”，再按匹配提交和文件生成以下命令。调试模式未执行 log，因此这里只能输出动态模板。",
                 Color.White);
             AppendDebugCommand(
             [
@@ -628,6 +696,7 @@ public partial class MainWnd : Form
         btn_RemoveForExport.Enabled = !exporting;
         cb_ExportVersion.Enabled = !exporting;
         cb_ExportLocal.Enabled = !exporting;
+        cb_ExportAllAccout.Enabled = !exporting;
         cb_ExportModify.Enabled = !exporting;
         btn_DebugMode.Enabled = !exporting;
         groupBox1.Enabled = !exporting;
@@ -639,6 +708,7 @@ public partial class MainWnd : Form
         if (!exporting)
         {
             UpdateLocalExportState();
+            UpdateAuthorSelectionState();
         }
     }
 
@@ -846,6 +916,19 @@ public partial class MainWnd : Form
         label1.Enabled = versionInputEnabled;
     }
 
+    private void ExportAllAuthorsSwitch_CheckedChanged(object? sender, EventArgs e)
+    {
+        UpdateAuthorSelectionState();
+    }
+
+    private void UpdateAuthorSelectionState()
+    {
+        bool selectionEnabled = !cb_ExportAllAccout.Checked;
+        lb_ExportAuthor.Enabled = selectionEnabled;
+        btn_AddToExport.Enabled = selectionEnabled;
+        btn_RemoveForExport.Enabled = selectionEnabled;
+    }
+
     private void UpdateModuleColors()
     {
         groupBox1.BackColor = cb_ExportVersion.Checked ? _versionExportColor : Color.Gray;
@@ -865,6 +948,7 @@ public partial class MainWnd : Form
             tb_ExportPath.Text = config.OutputPath;
             cb_ExportVersion.Checked = config.ExportVersionEnabled;
             cb_ExportLocal.Checked = config.ExportLocalEnabled;
+            cb_ExportAllAccout.Checked = config.ExportAllAuthorsEnabled;
             cb_ExportModify.Checked = config.ExportAuthorChangesEnabled;
 
             lb_AllAuthor.Items.Clear();
@@ -896,6 +980,7 @@ public partial class MainWnd : Form
             ProjectVersionNumber = tb_VersionNum.Text.Trim(),
             ExportVersionEnabled = cb_ExportVersion.Checked,
             ExportLocalEnabled = cb_ExportLocal.Checked,
+            ExportAllAuthorsEnabled = cb_ExportAllAccout.Checked,
             ExportAuthors = GetAllItems(lb_ExportAuthor),
             AllAuthors = GetAllItems(lb_AllAuthor),
             BeginVersionNumber = tb_BeginVersionNum.Text.Trim(),

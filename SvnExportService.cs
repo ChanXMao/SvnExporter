@@ -56,12 +56,80 @@ public sealed class SvnExportService : ISvnExportService
             string repositoryRelativePath = NormalizeRepositoryPath(
                 relativeUrl.StartsWith('^') ? relativeUrl[1..] : relativeUrl);
 
-            return new SvnWorkingCopyInfo(url, repositoryRoot, repositoryRelativePath);
+            return new SvnWorkingCopyInfo(url, repositoryRoot, repositoryRelativePath, ReadInfoRevision(entry));
         }
         catch (XmlException ex)
         {
             throw new InvalidOperationException("无法解析 SVN 工作副本信息。", ex);
         }
+    }
+
+    public async Task<string> ResolveExportRevisionAsync(
+        string localPath,
+        string revision,
+        bool useLocalFiles,
+        Action<SvnConsoleMessage>? output = null,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        // 本地模式不使用已禁用的版本输入框，也不向服务器查询最新版本。
+        string normalized = useLocalFiles
+            ? "HEAD"
+            : NormalizeRevision(revision, "工程导出版本号", emptyMeansHead: true);
+        if (!useLocalFiles && normalized != "HEAD")
+        {
+            return normalized;
+        }
+
+        SvnWorkingCopyInfo workingCopy = await GetWorkingCopyInfoAsync(localPath, output, cancellationToken);
+        string resolved = useLocalFiles
+            ? workingCopy.Revision
+            : await GetLatestRevisionAsync(workingCopy, output, cancellationToken);
+        Report(output,
+            useLocalFiles
+                ? $"本地主目录工作副本版本：{resolved}。目录名及账号修改结束版本均使用此版本；复制内容仍包含本地未提交修改。"
+                : $"仓库最新版本已固定为：{resolved}。目录名、版本快照及账号修改结束版本均使用此版本。",
+            SvnMessageKind.Normal);
+        return resolved;
+    }
+
+    private async Task<string> GetLatestRevisionAsync(
+        SvnWorkingCopyInfo workingCopy,
+        Action<SvnConsoleMessage>? output,
+        CancellationToken cancellationToken)
+    {
+        CommandResult command = await RunCommandAsync(
+            ["info", "--xml", "--revision", "HEAD", "--non-interactive",
+                AppendPegRevision(workingCopy.RepositoryRootUrl, "HEAD")],
+            output,
+            cancellationToken);
+        if (!command.Succeeded)
+        {
+            throw new InvalidOperationException("无法读取 SVN 仓库最新版本，请检查上方错误。");
+        }
+
+        try
+        {
+            XElement entry = FindElement(XDocument.Parse(command.StandardOutput, LoadOptions.None), "entry")
+                ?? throw new InvalidOperationException("SVN 返回的信息中缺少版本节点。");
+            return ReadInfoRevision(entry);
+        }
+        catch (XmlException ex)
+        {
+            throw new InvalidOperationException("无法解析 SVN 仓库最新版本。", ex);
+        }
+    }
+
+    private static string ReadInfoRevision(XElement entry)
+    {
+        // entry 的 revision 是工作副本/查询版本，commit 的 revision 只是最后修改版本。
+        if (!long.TryParse((string?)entry.Attribute("revision"), NumberStyles.None,
+                CultureInfo.InvariantCulture, out long revision))
+        {
+            throw new InvalidOperationException("无法读取有效的 SVN 版本号，请确认主目录是已提交的 SVN 工作副本目录。");
+        }
+
+        return revision.ToString(CultureInfo.InvariantCulture);
     }
 
     public async Task<SvnExportResult> ExportVersionSnapshotAsync(
@@ -90,8 +158,12 @@ public sealed class SvnExportService : ISvnExportService
                 cancellationToken);
         }
 
-        Directory.CreateDirectory(destinationRoot);
         SvnWorkingCopyInfo workingCopy = await GetWorkingCopyInfoAsync(localRoot, output, cancellationToken);
+        if (revision == "HEAD")
+        {
+            revision = await GetLatestRevisionAsync(workingCopy, output, cancellationToken);
+        }
+        Directory.CreateDirectory(destinationRoot);
 
         var candidates = new Dictionary<string, ExportCandidate>(StringComparer.OrdinalIgnoreCase);
         int skippedCount = 0;
@@ -406,22 +478,27 @@ public sealed class SvnExportService : ISvnExportService
         string startRevision = NormalizeRevision(request.StartRevision, "起始版本号", emptyMeansHead: false);
         IReadOnlyList<string> subdirectories = NormalizeSubdirectories(request.Subdirectories, localRoot);
         IReadOnlyList<string> filePatterns = NormalizeFilePatterns(request.FilePatterns);
-        IReadOnlyList<string> authors = NormalizeAuthors(request.Authors);
-        if (authors.Count == 0)
+        IReadOnlyList<string> authors = request.ExportAllAuthors
+            ? Array.Empty<string>()
+            : NormalizeAuthors(request.Authors);
+        if (!request.ExportAllAuthors && authors.Count == 0)
         {
             throw new InvalidOperationException("账号修改导出至少需要选择一个账号。");
         }
 
         IReadOnlyDictionary<string, string> authorFileNames = AuthorDiffFileName.CreateFileNames(authors);
 
-        if (startRevision.Length > 0 && endRevision != "HEAD" &&
+        SvnWorkingCopyInfo workingCopy = await GetWorkingCopyInfoAsync(localRoot, output, cancellationToken);
+        if (endRevision == "HEAD")
+        {
+            endRevision = await GetLatestRevisionAsync(workingCopy, output, cancellationToken);
+        }
+
+        if (startRevision.Length > 0 &&
             long.Parse(startRevision, CultureInfo.InvariantCulture) > long.Parse(endRevision, CultureInfo.InvariantCulture))
         {
             throw new InvalidOperationException("起始版本号不能大于工程导出版本号。");
         }
-
-        Directory.CreateDirectory(destinationRoot);
-        SvnWorkingCopyInfo workingCopy = await GetWorkingCopyInfoAsync(localRoot, output, cancellationToken);
 
         DateTimeOffset? todayStart = null;
         string logStartRevision = startRevision;
@@ -454,8 +531,30 @@ public sealed class SvnExportService : ISvnExportService
             workingCopy.RepositoryRelativePath,
             todayStart,
             subdirectories,
-            filePatterns);
+            filePatterns,
+            request.ExportAllAuthors,
+            long.Parse(endRevision, CultureInfo.InvariantCulture));
 
+        if (request.ExportAllAuthors)
+        {
+            authors = changeSet.Revisions
+                .Select(change => change.Author)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(author => author, StringComparer.Ordinal)
+                .ToArray();
+            if (authors.Count == 0)
+            {
+                const string message = "未找到符合版本范围、导出子目录及文件类型条件的修改记录，未生成账号 diff 文件。";
+                Report(output, message, SvnMessageKind.Success);
+                return new SvnExportResult(true, 0, 0, 0, message);
+            }
+
+            // 自动识别出的所有账号必须在写入任何 diff 前完成文件名及冲突校验。
+            authorFileNames = AuthorDiffFileName.CreateFileNames(authors);
+            Report(output, $"导出全部账号：找到 {authors.Count} 个符合条件的账号。", SvnMessageKind.Normal);
+        }
+
+        Directory.CreateDirectory(destinationRoot);
         ILookup<string, AuthorRevisionChange> changesByAuthor = changeSet.Revisions
             .ToLookup(change => change.Author, StringComparer.Ordinal);
         int generatedFileCount = 0;
@@ -664,7 +763,9 @@ public sealed class SvnExportService : ISvnExportService
         string rootRepositoryPath,
         DateTimeOffset? earliestDate,
         IReadOnlyList<string> subdirectories,
-        IReadOnlyList<string> filePatterns)
+        IReadOnlyList<string> filePatterns,
+        bool exportAllAuthors,
+        long endRevision)
     {
         try
         {
@@ -676,7 +777,7 @@ public sealed class SvnExportService : ISvnExportService
             foreach (XElement logEntry in document.Descendants().Where(element => element.Name.LocalName == "logentry"))
             {
                 string author = FindElement(logEntry, "author")?.Value.Trim() ?? string.Empty;
-                if (!selectedAuthors.Contains(author))
+                if (!exportAllAuthors && !selectedAuthors.Contains(author))
                 {
                     continue;
                 }
@@ -703,6 +804,13 @@ public sealed class SvnExportService : ISvnExportService
                         out long revision))
                 {
                     throw new InvalidOperationException("SVN 修改记录中缺少有效的版本号。");
+                }
+
+                // 日期起点可能解析到比本地结束版本更高的版本，SVN 会返回倒序范围。
+                // 无论日志方向如何，都不能纳入结束版本之后的提交。
+                if (revision > endRevision)
+                {
+                    continue;
                 }
 
                 var changedPaths = new Dictionary<string, AuthorChangedPath>(StringComparer.Ordinal);

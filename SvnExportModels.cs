@@ -21,7 +21,8 @@ public sealed record SvnConsoleMessage(string Text, SvnMessageKind Kind);
 public sealed record SvnWorkingCopyInfo(
     string Url,
     string RepositoryRootUrl,
-    string RepositoryRelativePath);
+    string RepositoryRelativePath,
+    string Revision);
 
 /// <summary>
 /// 按版本导出快照所需的参数。
@@ -44,7 +45,8 @@ public sealed record AuthorExportRequest(
     IReadOnlyList<string> FilePatterns,
     string StartRevision,
     string EndRevision,
-    string DestinationDirectory);
+    string DestinationDirectory,
+    bool ExportAllAuthors = false);
 
 /// <summary>
 /// 一次导出操作的结果。
@@ -61,6 +63,13 @@ public sealed record SvnExportResult(
 /// </summary>
 public interface ISvnExportService
 {
+    Task<string> ResolveExportRevisionAsync(
+        string localPath,
+        string revision,
+        bool useLocalFiles,
+        Action<SvnConsoleMessage>? output = null,
+        CancellationToken cancellationToken = default);
+
     Task<SvnWorkingCopyInfo> GetWorkingCopyInfoAsync(
         string localPath,
         Action<SvnConsoleMessage>? output = null,
